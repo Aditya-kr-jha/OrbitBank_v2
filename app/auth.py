@@ -6,11 +6,12 @@ from fastapi import Depends, HTTPException, status, Query, WebSocketException
 from fastapi.security import OAuth2PasswordBearer
 from jwt import InvalidTokenError
 from passlib.context import CryptContext
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Session, select
 
 from app.config import settings
-from app.db.session import get_session
-from app.models.models import get_user, User
+from app.db.session import get_async_session
+from app.models.models import User, get_user_async
 from app.schemas.token import TokenData
 
 SECRET_KEY = settings.SECRET_KEY
@@ -33,8 +34,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def authenticate_user(username: str, password: str, session) -> User | bool:
-    user = get_user(username, session)
+async def authenticate_user(username: str, password: str, session) -> User | bool:
+    user = await get_user_async(username, session)
     if not user:
         return False
     if not verify_password(password, user.hashed_password):
@@ -68,7 +69,7 @@ def create_access_token(data: dict, expires_delta: int | timedelta = None) -> st
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_async_session),
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -83,7 +84,7 @@ async def get_current_user(
         token_data = TokenData(username=username)
     except InvalidTokenError:
         raise credentials_exception
-    user = get_user(token_data.username, session)
+    user = await get_user_async(token_data.username, session)
     if user is None:
         raise credentials_exception
     return user

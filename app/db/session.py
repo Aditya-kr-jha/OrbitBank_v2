@@ -1,19 +1,39 @@
-from typing import Generator
+from typing import Any, AsyncGenerator
 
-from sqlmodel import Session, SQLModel, create_engine
-
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import SQLModel
 from app.config import settings
 
-engine = create_engine(settings.DATABASE_URL, echo=settings.ECHO)
 
+# Create the async engine
+async_engine = create_async_engine(settings.DATABASE_URL, echo=settings.ECHO)
 
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
+# Create a sessionmaker for async sessions
+AsyncSessionLocal = sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
-def get_session() -> Generator[Session, None, None]:
+async def create_db_and_tables_async():
+    """Creates database tables asynchronously."""
+    async with async_engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    print("Database tables created.")
+
+async def get_async_session() -> AsyncGenerator[Any, Any]:
     """
-    Creates a new session for each request and closes it after the request is processed.
+    Dependency function that yields an async session.
+    Ensures the session is closed after the request.
     """
-    print("Creating a new session")
-    with Session(engine) as session:
-        yield session
+    print("Creating a new async session")
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+            print("Async session closed")

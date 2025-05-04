@@ -1,10 +1,15 @@
 from datetime import date, datetime, timezone
 from typing import Optional, List
+
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, Field, Relationship, select
 from decimal import Decimal
 
+from app.model_enums.model_enums import UserStatus, CurrencyCode, AccountStatus, TransactionType, TransactionStatus
+
 
 class User(SQLModel, table=True):
+    """User model representing bank customers."""
     __tablename__ = "users"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -16,7 +21,7 @@ class User(SQLModel, table=True):
     address: Optional[str] = None
     pan_number: Optional[str] = Field(default=None, unique=True)
     date_of_birth: Optional[date] = None
-    status: str = Field(default="ACTIVE")
+    status: UserStatus = Field(default=UserStatus.ACTIVE)
     password_changed_at: datetime = Field(default_factory=lambda: datetime(1, 1, 1, tzinfo=timezone.utc))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -25,6 +30,7 @@ class User(SQLModel, table=True):
 
 
 class Bank(SQLModel, table=True):
+    """Bank institution model."""
     __tablename__ = "banks"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -37,6 +43,7 @@ class Bank(SQLModel, table=True):
 
 
 class Branch(SQLModel, table=True):
+    """Bank branch model with IFSC code as identifier."""
     __tablename__ = "branches"
 
     ifsc_code: str = Field(primary_key=True)
@@ -51,12 +58,13 @@ class Branch(SQLModel, table=True):
 
 
 class AccountType(SQLModel, table=True):
+    """Types of bank accounts with associated rules."""
     __tablename__ = "account_types"
 
     code: str = Field(primary_key=True)
     name: str = Field(unique=True)
-    minimum_balance: Decimal = Field(default=0.0000)
-    interest_rate: Decimal = Field(default=0.00)
+    minimum_balance: Decimal = Field(default=Decimal("0.0000"))
+    interest_rate: Decimal = Field(default=Decimal("0.00"))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -64,6 +72,7 @@ class AccountType(SQLModel, table=True):
 
 
 class Account(SQLModel, table=True):
+    """Bank account model."""
     __tablename__ = "accounts"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -71,9 +80,9 @@ class Account(SQLModel, table=True):
     account_number: str = Field(unique=True)
     branch_ifsc: str = Field(foreign_key="branches.ifsc_code")
     account_type_code: str = Field(foreign_key="account_types.code")
-    balance: Decimal = Field(default=0.0000)
-    currency_code: str
-    status: str = Field(default="ACTIVE")
+    balance: Decimal = Field(default=Decimal("0.0000"))
+    currency_code: CurrencyCode
+    status: AccountStatus = Field(default=AccountStatus.ACTIVE)
     opened_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     closed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -83,18 +92,23 @@ class Account(SQLModel, table=True):
     branch: Branch = Relationship(back_populates="accounts")
     account_type: AccountType = Relationship(back_populates="accounts")
     entries: List["Entry"] = Relationship(back_populates="account")
-    from_transfers: List["Transfer"] = Relationship(back_populates="from_account", sa_relationship_kwargs={
-        "foreign_keys": "[Transfer.from_account_id]"})
-    to_transfers: List["Transfer"] = Relationship(back_populates="to_account",
-                                                  sa_relationship_kwargs={"foreign_keys": "[Transfer.to_account_id]"})
+    from_transfers: List["Transfer"] = Relationship(
+        back_populates="from_account",
+        sa_relationship_kwargs={"foreign_keys": "[Transfer.from_account_id]"}
+    )
+    to_transfers: List["Transfer"] = Relationship(
+        back_populates="to_account",
+        sa_relationship_kwargs={"foreign_keys": "[Transfer.to_account_id]"}
+    )
 
 
 class Transaction(SQLModel, table=True):
+    """Financial transaction record."""
     __tablename__ = "transactions"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    type: str
-    status: str
+    type: TransactionType
+    status: TransactionStatus
     reference_number: Optional[str] = Field(default=None, unique=True)
     description: Optional[str] = None
     initiated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -107,12 +121,13 @@ class Transaction(SQLModel, table=True):
 
 
 class Entry(SQLModel, table=True):
+    """Accounting entry for tracking money movements."""
     __tablename__ = "entries"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     account_id: int = Field(foreign_key="accounts.id")
     amount: Decimal
-    currency_code: str
+    currency_code: CurrencyCode
     transaction_id: Optional[int] = Field(default=None, foreign_key="transactions.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -121,6 +136,7 @@ class Entry(SQLModel, table=True):
 
 
 class Transfer(SQLModel, table=True):
+    """Fund transfer between accounts."""
     __tablename__ = "transfers"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -128,16 +144,22 @@ class Transfer(SQLModel, table=True):
     from_account_id: int = Field(foreign_key="accounts.id")
     to_account_id: int = Field(foreign_key="accounts.id")
     amount: Decimal
-    currency_code: str
+    currency_code: CurrencyCode
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     transaction: Transaction = Relationship(back_populates="transfer")
-    from_account: Account = Relationship(back_populates="from_transfers",
-                                         sa_relationship_kwargs={"foreign_keys": "[Transfer.from_account_id]"})
-    to_account: Account = Relationship(back_populates="to_transfers",
-                                       sa_relationship_kwargs={"foreign_keys": "[Transfer.to_account_id]"})
+    from_account: Account = Relationship(
+        back_populates="from_transfers",
+        sa_relationship_kwargs={"foreign_keys": "[Transfer.from_account_id]"}
+    )
+    to_account: Account = Relationship(
+        back_populates="to_transfers",
+        sa_relationship_kwargs={"foreign_keys": "[Transfer.to_account_id]"}
+    )
 
-def get_user(username: str, session) -> Optional[User]:
+
+async def get_user_async(username: str, session: AsyncSession) -> Optional[User]:
+    """Retrieve a user by username using async session."""
     statement = select(User).where(User.username == username)
-    user = session.exec(statement).first()
-    return user
+    result = await session.execute(statement)
+    return result.scalar_one_or_none()
