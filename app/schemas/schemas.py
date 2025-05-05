@@ -290,3 +290,11 @@ class NewTransferRequest(BaseModel):
     to_account_id: int
     amount: Decimal = Field(..., gt=0)
     description: str = None
+
+class AccountBalanceRead(BaseModel):
+    account_number: str
+    balance: Decimal
+
+class WithdrawalRequest(BaseModel):
+    amount: Decimal
+    description: str = None

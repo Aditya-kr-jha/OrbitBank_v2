@@ -1,5 +1,13 @@
 from typing import Any, AsyncGenerator
 
+try:
+    import greenlet
+except ImportError:
+    raise ImportError(
+        "The greenlet library is required for SQLAlchemy async operations. "
+        "Please install it using: pip install greenlet"
+    )
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
