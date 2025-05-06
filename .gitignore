@@ -11,4 +11,5 @@ ENV/
 
 # AWS credentials
 aws_credentials.json
-.aws/
+.aws/app/.env
+app/.env
