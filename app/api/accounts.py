@@ -1,8 +1,18 @@
+import logging
 from datetime import datetime, timezone, date
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+    Body,
+    Query,
+    BackgroundTasks,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.session import get_async_session
 from app.crud import create_crud_router, CRUDBase
@@ -22,7 +32,17 @@ from app.schemas.schemas import (
     AccountBalanceRead,
     WithdrawalRequest,
 )
+from services.notification_service_ses import (
+    SimpleSESNotificationService,
+    get_ses_service,
+)
+from app.services.notification_service_sns import (
+    SimpleSNSNotificationService as SNSService,
+    get_sns_service,
+)
+from app.models.models import User
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Generate CRUD routes
@@ -93,18 +113,25 @@ async def get_account_entries(
 async def deposit_to_account(
     account_id: int,
     deposit_data: DepositRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_async_session),
+    ses_service: SimpleSESNotificationService = Depends(get_ses_service),
+    sns_service: SNSService = Depends(get_sns_service),  # Add SNS Service dependency
 ):
     """Deposit funds into an account."""
-    # Check if account exists and get account
-    account_crud = CRUDBase[Account, AccountCreate, AccountRead, AccountUpdate, int](
-        Account
+    # Fetch account with owner eagerly loaded
+    account_stmt = (
+        select(Account)
+        .options(selectinload(Account.owner))  # Eagerly load the owner
+        .where(Account.id == account_id)
     )
-    db_account = await account_crud.get(db_session=session, pk_id=account_id)
+    result = await session.execute(account_stmt)
+    db_account: Account | None = result.scalar_one_or_none()
 
     if not db_account:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Account not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Account {account_id} not found",
         )
 
     # Create transaction record
@@ -135,12 +162,74 @@ async def deposit_to_account(
     try:
         await session.commit()
         await session.refresh(transaction)
+        # Refresh account AFTER commit to get final balance state for notifications
+        await session.refresh(db_account)
+
+        # --- Send Email Notification ---
+        if db_account.owner and db_account.owner.email:
+            subject = f"Deposit Confirmation - Account {db_account.account_number}"
+            body = (
+                f"Dear {db_account.owner.full_name or 'Customer'},\n\n"
+                f"A deposit of {deposit_data.amount:.2f} {db_account.currency_code} "
+                f"was successfully made to your account ({db_account.account_number}) "
+                f"on {transaction.completed_at.strftime('%Y-%m-%d %H:%M:%S %Z')}.\n\n"
+                f"Description: {transaction.description}\n"
+                f"Transaction ID: {transaction.id}\n"
+                f"Your new balance is: {db_account.balance:.2f} {db_account.currency_code}\n\n"
+                f"Thank you for banking with us."
+            )
+            background_tasks.add_task(
+                ses_service.send_email,
+                recipient_email=db_account.owner.email,
+                subject=subject,
+                body_text=body,
+            )
+            logger.info(
+                f"Deposit email notification queued for account {account_id} to {db_account.owner.email}"
+            )
+        else:
+            logger.warning(
+                f"Could not send deposit email notification for account {account_id}: Owner or email missing."
+            )
+
+        # --- Send SMS Notification ---
+        if db_account.owner and db_account.owner.phone_number:
+            # Ensure phone number is in E.164 format before sending
+            if sns_service._validate_phone_number(db_account.owner.phone_number):
+                sms_message = (
+                    f"Deposit Alert: +{deposit_data.amount:.2f} {db_account.currency_code} "
+                    f"to Acct ...{db_account.account_number[-4:]}. "  # Use last 4 digits for brevity
+                    f"New Bal: {db_account.balance:.2f} {db_account.currency_code}. "
+                    f"TxID: {transaction.id}"
+                )
+                # Add the SMS sending task to the background
+                background_tasks.add_task(
+                    sns_service.send_sms,
+                    phone_number=db_account.owner.phone_number,
+                    message=sms_message,
+                )
+                logger.info(
+                    f"Deposit SMS notification queued for account {account_id} to {db_account.owner.phone_number}"
+                )
+            else:
+                logger.warning(
+                    f"Could not send deposit SMS for account {account_id}: Invalid phone number format for {db_account.owner.phone_number}."
+                )
+        else:
+            logger.warning(
+                f"Could not send deposit SMS notification for account {account_id}: Owner or phone number missing."
+            )
+        # --- End Notifications ---
+
         return transaction
     except Exception as e:
         await session.rollback()
+        logger.error(
+            f"Error processing deposit for account {account_id}: {e}", exc_info=True
+        )  # Add detailed logging
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing deposit: {e}",
+            detail="Error processing deposit: An internal error occurred.",  # Avoid leaking specific error details
         )
 
 
@@ -150,10 +239,26 @@ async def deposit_to_account(
 async def withdraw_from_account(
     account_id: int,
     withdrawal_data: WithdrawalRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_async_session),
+    ses_service: SimpleSESNotificationService = Depends(get_ses_service),
+    sns_service: SNSService = Depends(get_sns_service),  # Add SNS Service dependency
 ):
     """Withdraw funds from an account."""
-    db_account = await get_account_or_404(account_id, session)
+    # Fetch account with owner eagerly loaded
+    account_stmt = (
+        select(Account)
+        .options(selectinload(Account.owner))  # Eagerly load the owner
+        .where(Account.id == account_id)
+    )
+    result = await session.execute(account_stmt)
+    db_account: Account | None = result.scalar_one_or_none()
+
+    if not db_account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Account {account_id} not found",
+        )
 
     # Check sufficient funds
     if db_account.balance < withdrawal_data.amount:
@@ -189,13 +294,75 @@ async def withdraw_from_account(
     try:
         await session.commit()
         await session.refresh(transaction)
+        # Refresh account AFTER commit to get final balance state for notifications
+        await session.refresh(db_account)
+        # No need to refresh owner here as it was eagerly loaded
+
+        # --- Send Email Notification ---
+        if db_account.owner and db_account.owner.email:
+            subject = f"Withdrawal Confirmation - Account {db_account.account_number}"
+            body = (
+                f"Dear {db_account.owner.full_name or 'Customer'},\n\n"
+                f"A withdrawal of {withdrawal_data.amount:.2f} {db_account.currency_code} "
+                f"was successfully made from your account ({db_account.account_number}) "
+                f"on {transaction.completed_at.strftime('%Y-%m-%d %H:%M:%S %Z')}.\n\n"
+                f"Description: {transaction.description}\n"
+                f"Transaction ID: {transaction.id}\n"
+                f"Your new balance is: {db_account.balance:.2f} {db_account.currency_code}\n\n"
+                f"Thank you for banking with us."
+            )
+            background_tasks.add_task(
+                ses_service.send_email,
+                recipient_email=db_account.owner.email,
+                subject=subject,
+                body_text=body,
+            )
+            logger.info(
+                f"Withdrawal email notification queued for account {account_id} to {db_account.owner.email}"
+            )
+        else:
+            logger.warning(
+                f"Could not send withdrawal email notification for account {account_id}: Owner or email missing."
+            )
+
+        # --- Send SMS Notification ---
+        if db_account.owner and db_account.owner.phone_number:
+            # Ensure phone number is in E.164 format before sending
+            if sns_service._validate_phone_number(db_account.owner.phone_number):
+                sms_message = (
+                    f"Withdrawal Alert: -{withdrawal_data.amount:.2f} {db_account.currency_code} "
+                    f"from Acct ...{db_account.account_number[-4:]}. "  # Use last 4 digits
+                    f"New Bal: {db_account.balance:.2f} {db_account.currency_code}. "
+                    f"TxID: {transaction.id}"
+                )
+                # Add the SMS sending task to the background
+                background_tasks.add_task(
+                    sns_service.send_sms,
+                    phone_number=db_account.owner.phone_number,
+                    message=sms_message,
+                )
+                logger.info(
+                    f"Withdrawal SMS notification queued for account {account_id} to {db_account.owner.phone_number}"
+                )
+            else:
+                logger.warning(
+                    f"Could not send withdrawal SMS for account {account_id}: Invalid phone number format for {db_account.owner.phone_number}."
+                )
+        else:
+            logger.warning(
+                f"Could not send withdrawal SMS notification for account {account_id}: Owner or phone number missing."
+            )
+        # --- End Notifications ---
+
         return transaction
     except Exception as e:
         await session.rollback()
-        # Log error e
+        logger.error(
+            f"Error processing withdrawal for account {account_id}: {e}", exc_info=True
+        )  # Add detailed logging
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing withdrawal: {e}",
+            detail="Error processing withdrawal: An internal error occurred.",  # Avoid leaking specific error details
         )
 
 

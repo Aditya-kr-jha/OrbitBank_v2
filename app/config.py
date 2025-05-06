@@ -12,13 +12,16 @@ class Settings(BaseSettings):
     # Application settings
     ECHO: bool = True
     RELOAD: bool = True
-
+    # aws configuration
+    AWS_ACCESS_KEY_ID: str = "fhefhedfuefyeudnbfhefhuefuefuygeruf"
+    AWS_SECRET_ACCESS_KEY: str = "hefeyfrhiwdhefiheyfhienhyfhefy"
+    AWS_DEFAULT_REGION: str = "jednjehfue"
+    SENDER_EMAIL: str = "jejfehfu"
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
-
 
 
 settings = Settings()

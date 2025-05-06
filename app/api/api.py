@@ -1,3 +1,5 @@
+from enum import verify
+
 from fastapi import APIRouter, Depends  # Import Depends
 
 # Import the specific routers from users.py
@@ -13,6 +15,8 @@ from app.api import (
     transfers,
 )
 from app.auth import get_current_active_user
+from app.services.notification_service_ses import ses_router
+from app.services.notification_service_sns import sns_router
 
 api_router = APIRouter()
 
@@ -65,5 +69,17 @@ api_router.include_router(
     transfers.router,
     prefix="/transfers",
     tags=["Transfers"],
+    dependencies=[auth_dependency],
+)
+api_router.include_router(
+    sns_router,
+    prefix="/verify",
+    tags=["Services"],
+    dependencies=[auth_dependency],
+)
+api_router.include_router(
+    ses_router,
+    prefix="/verify",
+    tags=["Services"],
     dependencies=[auth_dependency],
 )
