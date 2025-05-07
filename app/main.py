@@ -23,6 +23,7 @@ from app.schemas.token import Token
 
 logger = logging.getLogger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Starting up the FastAPI application...")
@@ -36,9 +37,11 @@ app = FastAPI(lifespan=lifespan, title="Bank Application", version="0.1.2")
 
 app.include_router(api_router)
 
+
 @app.get("/")
 async def root():
     return {"message": "Welcome to the OrbitBank API"}
+
 
 @app.post("/token", response_model=Token)
 async def login_for_access_token(

@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 from typing import Optional, List
 
+import sqlalchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, Field, Relationship, select
 from decimal import Decimal
@@ -41,10 +42,17 @@ class User(SQLModel, table=True):
     date_of_birth: Optional[date] = None
     status: UserStatus = Field(default=UserStatus.ACTIVE)
     password_changed_at: datetime = Field(
-        default_factory=lambda: datetime(1, 1, 1, tzinfo=timezone.utc)
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
     )
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
 
     # Existing relationship
     accounts: List["Account"] = Relationship(back_populates="owner")
@@ -82,8 +90,14 @@ class Bank(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(unique=True)
     short_code: str = Field(unique=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
 
     branches: List["Branch"] = Relationship(back_populates="bank")
 
@@ -97,8 +111,14 @@ class Branch(SQLModel, table=True):
     bank_id: int = Field(foreign_key="banks.id")
     name: str
     address: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
 
     bank: Bank = Relationship(back_populates="branches")
     accounts: List["Account"] = Relationship(back_populates="branch")
@@ -113,8 +133,14 @@ class AccountType(SQLModel, table=True):
     name: str = Field(unique=True)
     minimum_balance: Decimal = Field(default=Decimal("0.0000"))
     interest_rate: Decimal = Field(default=Decimal("0.00"))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
 
     accounts: List["Account"] = Relationship(back_populates="account_type")
 
@@ -132,10 +158,19 @@ class Account(SQLModel, table=True):
     balance: Decimal = Field(default=Decimal("0.0000"))
     currency_code: CurrencyCode
     status: AccountStatus = Field(default=AccountStatus.ACTIVE)
-    opened_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    opened_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
     closed_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
 
     owner: User = Relationship(back_populates="accounts")
     branch: Branch = Relationship(back_populates="accounts")
@@ -161,10 +196,22 @@ class Transaction(SQLModel, table=True):
     status: TransactionStatus
     reference_number: Optional[str] = Field(default=None, unique=True)
     description: Optional[str] = None
-    initiated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    initiated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
+    completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),  # Add this line
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
 
     entries: List["Entry"] = Relationship(back_populates="transaction")
     transfer: Optional["Transfer"] = Relationship(back_populates="transaction")
@@ -180,7 +227,10 @@ class Entry(SQLModel, table=True):
     amount: Decimal
     currency_code: CurrencyCode
     transaction_id: Optional[int] = Field(default=None, foreign_key="transactions.id")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
 
     account: Account = Relationship(back_populates="entries")
     transaction: Optional[Transaction] = Relationship(back_populates="entries")
@@ -197,7 +247,10 @@ class Transfer(SQLModel, table=True):
     to_account_id: int = Field(foreign_key="accounts.id")
     amount: Decimal
     currency_code: CurrencyCode
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.TIMESTAMP(timezone=True),
+    )
 
     transaction: Transaction = Relationship(back_populates="transfer")
     from_account: Account = Relationship(

@@ -13,10 +13,25 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 from app.config import settings
 
-
-# Create the async engine
-async_engine = create_async_engine(settings.DATABASE_URL, echo=settings.ECHO)
-
+# Construct the database URL
+DATABASE_URL = f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.RDS_ENDPOINT}:{settings.DB_PORT}/{settings.DB_NAME}"
+# DATABASE_URL = "sqlite+aiosqlite:///./orbit_bank.db"
+# Create the async engine with proper AWS RDS configuration
+async_engine = create_async_engine(
+    DATABASE_URL,
+    echo=settings.ECHO,
+    connect_args={
+        "timeout": 60,
+        "command_timeout": 60,
+        "ssl": "require",  # Required for AWS RDS
+        "server_settings": {"application_name": "OrbitBank"},
+    },
+)
+# async_engine = create_async_engine(
+#     DATABASE_URL,
+#     echo=settings.ECHO,
+#     connect_args={"check_same_thread": False},  # Required for SQLite
+# )
 # Create a sessionmaker for async sessions
 AsyncSessionLocal = sessionmaker(
     bind=async_engine,
@@ -24,11 +39,17 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False,
 )
 
+
 async def create_db_and_tables_async():
     """Creates database tables asynchronously."""
-    async with async_engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    print("Database tables created.")
+    try:
+        async with async_engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        print("Database tables created.")
+    except Exception as e:
+        print(f"Error creating database tables: {e}")
+        raise
+
 
 async def get_async_session() -> AsyncGenerator[Any, Any]:
     """

@@ -1,3 +1,4 @@
+import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from pydantic import BaseModel
@@ -22,6 +23,8 @@ from app.schemas.schemas import (
     UserPasswordChange,
     AccountRead,
 )
+
+logger = logging.getLogger(__name__)
 
 # --- Router for User Registration (Public) ---
 registration_router = APIRouter()
@@ -107,55 +110,82 @@ async def get_my_accounts(
 
 @registration_router.post(
     "/register",
-    response_model=UserRead,
+    response_model=UserRead,  # type: ignore
     status_code=status.HTTP_201_CREATED,
     tags=["Users"],
 )
 async def register_user(
-    *, user_in: UserCreate, session: AsyncSession = Depends(get_async_session)
+    *, user_in: UserCreate, session: AsyncSession = Depends(get_async_session)  # type: ignore
 ):
     """
     Register a new user. Public endpoint.
     """
     # Check if user already exists (optional, depends on unique constraints)
-    existing_user_check = await session.execute(
-        select(User).where(User.username == user_in.username)
+    # This is a placeholder for your actual User model and query
+    existing_user_check = await session.execute(  # type: ignore
+        select(User).where(User.username == user_in.username)  # type: ignore
     )
-    if existing_user_check.scalar_one_or_none():
+    if existing_user_check.scalar_one_or_none():  # type: ignore
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Username already registered",
         )
 
     # Hash the password before creating the user object
-    hashed_pwd = hash_password(user_in.password)
-    user_data = user_in.model_dump()
+    hashed_pwd = hash_password(user_in.password)  # type: ignore
+    user_data = user_in.model_dump()  # type: ignore
     user_data["hashed_password"] = hashed_pwd
     del user_data["password"]  # Remove plain password
 
     db_user = User(**user_data)  # Create User model instance
 
     try:
-        session.add(db_user)
-        await session.commit()
-        await session.refresh(db_user)
-        return db_user
-    except IntegrityError as e:  # Catch potential unique constraint violations
-        await session.rollback()
-        # Log the error e.orig for details
-        detail = "User registration failed due to a conflict (e.g., duplicate email)."
-        if "email" in str(e.orig).lower():  # Basic check, adjust as needed
-            detail = "Email already registered."
-        elif "username" in str(e.orig).lower():
-            detail = "Username already registered."
-
+        session.add(db_user)  # type: ignore
+        await session.commit()  # type: ignore
+        await session.refresh(db_user)  # type: ignore
+        return db_user  # type: ignore
+    except IntegrityError as e:
+        await session.rollback()  # type: ignore
+        logger.error(
+            f"IntegrityError during user registration: {e.orig}", exc_info=True
+        )  # Log original error
+        detail = "User registration failed due to a conflict (e.g., duplicate email or other unique field)."
+        # More specific IntegrityError checks
+        if hasattr(e, "orig") and e.orig:  # Check if e.orig exists
+            error_msg = str(e.orig).lower()
+            # Example constraint names, adjust to your actual DB schema if different
+            if "users_email_key" in error_msg or (
+                "duplicate key value violates unique constraint" in error_msg
+                and "email" in error_msg
+            ):
+                detail = "Email already registered."
+            elif "users_username_key" in error_msg or (
+                "duplicate key value violates unique constraint" in error_msg
+                and "username" in error_msg
+            ):
+                detail = "Username already registered."
+            elif "users_phone_number_key" in error_msg or (
+                "duplicate key value violates unique constraint" in error_msg
+                and "phone_number" in error_msg
+            ):
+                detail = "Phone number already registered."
+            elif "users_pan_number_key" in error_msg or (
+                "duplicate key value violates unique constraint" in error_msg
+                and "pan_number" in error_msg
+            ):
+                detail = "PAN number already registered."
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     except Exception as e:
-        await session.rollback()
-        # Log the error e
+        await session.rollback()  # type: ignore
+        # Log the actual exception for 500 errors
+        logger.error(
+            f"An unexpected error occurred during user registration: {e}", exc_info=True
+        )
+        if hasattr(e, "orig") and e.orig:  # For DBAPIError subclasses like DataError
+            logger.error(f"Original database error detail: {e.orig}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred during user registration.",
+            detail="An error occurred during user registration. Please try again later.",
         )
 
 
