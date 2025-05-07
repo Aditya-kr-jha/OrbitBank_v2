@@ -20,7 +20,7 @@ from app.schemas.schemas import (
     TransferUpdate,
     NewTransferRequest,
 )
-from services.notification_service_ses import (
+from app.services.notification_service_ses import (
     get_ses_service,
     SimpleSESNotificationService,
 )

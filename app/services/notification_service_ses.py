@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, status, HTTPException
 from pydantic import BaseModel, EmailStr
 
 from app.config import settings
-from auth import create_verification_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.auth import create_verification_token, ACCESS_TOKEN_EXPIRE_MINUTES
 
 # Configure logging
 logging.basicConfig(

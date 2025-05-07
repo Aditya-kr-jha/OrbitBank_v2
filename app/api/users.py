@@ -33,7 +33,7 @@ from app.schemas.schemas import (
     AccountRead,
 )
 from app.models.models import User
-from services.notification_service_ses import (
+from app.services.notification_service_ses import (
     send_verification_email_task,
     SimpleSESNotificationService,
     get_ses_service,

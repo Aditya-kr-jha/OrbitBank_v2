@@ -32,7 +32,7 @@ from app.schemas.schemas import (
     AccountBalanceRead,
     WithdrawalRequest,
 )
-from services.notification_service_ses import (
+from app.services.notification_service_ses import (
     SimpleSESNotificationService,
     get_ses_service,
 )

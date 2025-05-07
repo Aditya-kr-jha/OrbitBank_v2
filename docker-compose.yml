@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  bank-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./app/.env
+    container_name: orbitbank_api

@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.git
+.gitignore
+app/.env # Specifically ignore the .env file inside the app directory
+# Or, more generally:
+# **/.env
+*.db
+*.sqlite3
