@@ -203,6 +203,7 @@ class TransferUpdate(BaseModel):
 class UserRead(UserBase):
     """Schema for user data in responses."""
     id: int
+    is_email_verified:bool
     status: UserStatus
     created_at: datetime
     updated_at: datetime

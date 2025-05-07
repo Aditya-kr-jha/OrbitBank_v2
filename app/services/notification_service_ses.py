@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, status, HTTPException
 from pydantic import BaseModel, EmailStr
 
 from app.config import settings
+from auth import create_verification_token, ACCESS_TOKEN_EXPIRE_MINUTES
 
 # Configure logging
 logging.basicConfig(
@@ -131,6 +132,57 @@ def get_ses_service() -> SimpleSESNotificationService:
 ses_router = APIRouter()
 
 
+def send_verification_email_task(
+    user_email: str,
+    full_name: str | None,
+    base_url: str,
+    ses_service: SimpleSESNotificationService,
+):
+    """
+    Generates token and sends the verification email.
+    Designed to be run as a background task.
+    """
+    try:
+        token = create_verification_token(user_email)
+        verification_url = f"{base_url}users/verify-email/{token}"
+
+        logger.info(f"Generated verification URL for {user_email}: {verification_url}")
+
+        subject = "OrbitBank: Please Verify Your Email Address"
+        body = f"""
+Hi {full_name or 'there'},
+
+Thanks for registering with OrbitBank!
+
+Please click the link below to verify your email address and activate your account:
+
+{verification_url}
+
+This link will expire in {ACCESS_TOKEN_EXPIRE_MINUTES // 60} hours.
+
+If you did not register for this account, please ignore this email.
+
+Thanks,
+The OrbitBank Team
+"""
+        # Use the passed SES service instance to send
+        sent = ses_service.send_email(
+            recipient_email=user_email, subject=subject, body_text=body
+        )
+        if sent:
+            logger.info(f"Verification email successfully sent to {user_email}.")
+        else:
+            logger.error(
+                f"Failed to send verification email to {user_email} using SES service."
+            )
+
+    except Exception as e:
+        # Log any error during background task execution
+        logger.exception(
+            f"Error in background task send_verification_email_task for {user_email}: {e}"
+        )
+
+
 class VerifyEmailRequest(BaseModel):
     email: EmailStr
 
@@ -173,7 +225,9 @@ async def request_ses_email_verification(
         HTTPException 503: If the SES service is not available/configured.
         HTTPException 500: If AWS SES fails to process the verification request.
     """
-    success = ses_service.verify_email_identity(request_body.email)
+    success = ses_service.ses_client.verify_email_identity(
+        EmailAddress=request_body.email
+    )
 
     if not success:
         raise HTTPException(

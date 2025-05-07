@@ -1,6 +1,14 @@
 import logging
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from typing import List, Any, Coroutine
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+    Body,
+    BackgroundTasks,
+    Request,
+)
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError  # Import IntegrityError
@@ -13,6 +21,7 @@ from app.auth import (
     hash_password,
     verify_password,
     get_current_active_user,
+    verify_verification_token,
 )  # Import hash_password and verify_password
 from sqlmodel import select
 
@@ -23,12 +32,81 @@ from app.schemas.schemas import (
     UserPasswordChange,
     AccountRead,
 )
+from app.models.models import User
+from services.notification_service_ses import (
+    send_verification_email_task,
+    SimpleSESNotificationService,
+    get_ses_service,
+)
 
 logger = logging.getLogger(__name__)
 
 # --- Router for User Registration (Public) ---
 registration_router = APIRouter()
 protected_user_router = APIRouter()
+
+
+@registration_router.get(
+    "/verify-email/{token}",
+    response_model=UserRead,
+    name="verify_email",
+    responses={
+        200: {"description": "Email successfully verified"},
+        400: {"description": "Invalid or expired verification token"},
+        404: {"description": "User not found"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def verify_email(
+    token: str, session: AsyncSession = Depends(get_async_session)
+) -> User:
+    """
+    Iternal use :
+    After a user registers, the system emails them a link containing a one‑time token.
+    Calling this endpoint with that token marks the user’s is_email_verified flag to true.
+    """
+    email = verify_verification_token(token)
+
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token.",
+        )
+
+    # Find the user by email using where() and scalar_one_or_none()
+    result = await session.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        logger.warning(
+            f"Valid verification token used but user with email {email} not found"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User associated with this token not found.",
+        )
+
+    if user.is_email_verified:
+        logger.info(f"Email {email} is already verified")
+        return user
+
+    # Mark as verified
+    user.is_email_verified = True
+    user.updated_at = datetime.now(timezone.utc)
+
+    try:
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        logger.info(f"Email successfully verified for user {email} (ID: {user.id})")
+        return user
+    except Exception as e:
+        await session.rollback()
+        logger.exception(f"Database error during email verification for {email}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred during email verification.",
+        )
 
 
 @protected_user_router.get("/me", response_model=UserRead, tags=["Users (Me)"])
@@ -110,79 +188,85 @@ async def get_my_accounts(
 
 @registration_router.post(
     "/register",
-    response_model=UserRead,  # type: ignore
+    response_model=UserRead,
     status_code=status.HTTP_201_CREATED,
     tags=["Users"],
 )
 async def register_user(
-    *, user_in: UserCreate, session: AsyncSession = Depends(get_async_session)  # type: ignore
+    *,
+    user_in: UserCreate,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    ses_service: SimpleSESNotificationService = Depends(get_ses_service),
 ):
     """
-    Register a new user. Public endpoint.
+    Register a new user and trigger email verification.
     """
-    # Check if user already exists (optional, depends on unique constraints)
-    # This is a placeholder for your actual User model and query
-    existing_user_check = await session.execute(  # type: ignore
-        select(User).where(User.username == user_in.username)  # type: ignore
+    # Check if user already exists
+    existing_user_check = await session.execute(
+        select(User).where(User.username == user_in.username)
     )
-    if existing_user_check.scalar_one_or_none():  # type: ignore
+    if existing_user_check.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Username already registered",
         )
 
     # Hash the password before creating the user object
-    hashed_pwd = hash_password(user_in.password)  # type: ignore
-    user_data = user_in.model_dump()  # type: ignore
+    hashed_pwd = hash_password(user_in.password)
+    user_data = user_in.model_dump()
     user_data["hashed_password"] = hashed_pwd
     del user_data["password"]  # Remove plain password
+
+    # Set email as not verified initially
+    user_data["is_email_verified"] = False
 
     db_user = User(**user_data)  # Create User model instance
 
     try:
-        session.add(db_user)  # type: ignore
-        await session.commit()  # type: ignore
-        await session.refresh(db_user)  # type: ignore
-        return db_user  # type: ignore
+        session.add(db_user)
+        await session.commit()
+        await session.refresh(db_user)
+
+        # Get base URL from request
+        base_url = f"{request.base_url}"
+
+        # Add email verification task to background tasks
+        background_tasks.add_task(
+            send_verification_email_task,
+            user_email=db_user.email,
+            full_name=db_user.full_name,
+            base_url=str(base_url),
+            ses_service=ses_service,
+        )
+
+        logger.info(
+            f"User {db_user.username} registered successfully. Verification email scheduled."
+        )
+        return db_user
     except IntegrityError as e:
-        await session.rollback()  # type: ignore
+        await session.rollback()
         logger.error(
             f"IntegrityError during user registration: {e.orig}", exc_info=True
-        )  # Log original error
-        detail = "User registration failed due to a conflict (e.g., duplicate email or other unique field)."
-        # More specific IntegrityError checks
-        if hasattr(e, "orig") and e.orig:  # Check if e.orig exists
+        )
+        detail = "User registration failed due to a conflict."
+
+        if hasattr(e, "orig") and e.orig:
             error_msg = str(e.orig).lower()
-            # Example constraint names, adjust to your actual DB schema if different
-            if "users_email_key" in error_msg or (
-                "duplicate key value violates unique constraint" in error_msg
-                and "email" in error_msg
-            ):
+            if "email" in error_msg:
                 detail = "Email already registered."
-            elif "users_username_key" in error_msg or (
-                "duplicate key value violates unique constraint" in error_msg
-                and "username" in error_msg
-            ):
+            elif "username" in error_msg:
                 detail = "Username already registered."
-            elif "users_phone_number_key" in error_msg or (
-                "duplicate key value violates unique constraint" in error_msg
-                and "phone_number" in error_msg
-            ):
+            elif "phone_number" in error_msg:
                 detail = "Phone number already registered."
-            elif "users_pan_number_key" in error_msg or (
-                "duplicate key value violates unique constraint" in error_msg
-                and "pan_number" in error_msg
-            ):
+            elif "pan_number" in error_msg:
                 detail = "PAN number already registered."
+
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     except Exception as e:
-        await session.rollback()  # type: ignore
-        # Log the actual exception for 500 errors
-        logger.error(
-            f"An unexpected error occurred during user registration: {e}", exc_info=True
-        )
-        if hasattr(e, "orig") and e.orig:  # For DBAPIError subclasses like DataError
-            logger.error(f"Original database error detail: {e.orig}")
+        await session.rollback()
+        logger.error(f"Error during user registration: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred during user registration. Please try again later.",
