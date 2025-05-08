@@ -198,32 +198,23 @@ async def request_ses_email_verification(
     ses_service: SimpleSESNotificationService = Depends(get_ses_service),
 ):
     """
-    **\*\*\* WARNING: SANDBOX USE ONLY \*\*\***
+    **SANDBOX USE ONLY.** Initiates AWS SES email verification for an address.
 
-    Initiates the AWS SES email verification process for the provided email address.
-    This endpoint is primarily intended as a **workaround for SES sandbox environments**
-    where you can only send emails *to* verified identities.
-
-    **How it works:**
-    1.  You call this endpoint with a user's email address.
-    2.  AWS SES sends a verification email to that address.
-    3.  **The user MUST manually open that email and click the verification link.**
-    4.  Once verified, your application (running in the SES sandbox) can send emails *to* this address.
-
-    **This does NOT automatically verify the email.** It only triggers the AWS process.
-    This is **NOT** standard practice for production environments. In production, you should
-    request SES production access to send emails freely.
+    Workaround for SES sandbox: allows sending *to* this address once the user
+    manually clicks the verification link sent by AWS.
+    This endpoint only triggers the AWS process; it does not auto-verify.
+    Not for production (request SES production access instead).
 
     Args:
-        request_body: Contains the email address to verify.
-        ses_service: Injected SES notification service instance.
+        request_body: Email address to verify.
+        ses_service: SES notification service instance.
 
     Returns:
-        A confirmation message indicating the verification email has been requested.
+        Confirmation that the SES verification email request was initiated.
 
     Raises:
-        HTTPException 503: If the SES service is not available/configured.
-        HTTPException 500: If AWS SES fails to process the verification request.
+        HTTPException 503: SES service unavailable.
+        HTTPException 500: AWS SES failed to process the request.
     """
     success = ses_service.ses_client.verify_email_identity(
         EmailAddress=request_body.email
