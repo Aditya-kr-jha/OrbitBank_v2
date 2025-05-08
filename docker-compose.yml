@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   bank-api:
-    build: .
+    image: 801829804930.dkr.ecr.us-east-1.amazonaws.com/bank-api:${IMAGE_TAG}
     ports:
       - "8000:8000"
     env_file:
