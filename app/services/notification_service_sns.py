@@ -190,7 +190,7 @@ async def initiate_sandbox_phone_verification(
     Users must provide the received OTP to complete verification via AWS Console/API.
 
     Args:
-        request_body: Phone number in E.164 format.
+        request_body: Phone number in format.
         sns_service: Injected SNS service instance.
 
     Returns:

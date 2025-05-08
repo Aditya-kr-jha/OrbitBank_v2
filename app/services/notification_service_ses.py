@@ -203,7 +203,7 @@ async def request_ses_email_verification(
     Workaround for SES sandbox: allows sending *to* this address once the user
     manually clicks the verification link sent by AWS.
     This endpoint only triggers the AWS process; it does not auto-verify.
-    Not for production (request SES production access instead).
+    Not for production .
 
     Args:
         request_body: Email address to verify.
